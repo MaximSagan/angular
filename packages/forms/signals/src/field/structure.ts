@@ -153,6 +153,7 @@ export abstract class FieldNodeStructure {
       (this.childrenMap as WritableSignal<ChildrenData | undefined>).update((current) =>
         this.computeChildrenMap(this.value(), current, true),
       );
+      this.node.onChildrenMaterialized();
     });
   }
 

@@ -202,6 +202,79 @@ describe('structure APIs', () => {
       expect((childA() as any).structure._areChildrenMaterialized()).toBeFalse();
     });
 
+    it('should not materialize children when marked as touched', () => {
+      const data = signal({a: {b: 'test'}, items: [{name: 'first'}, {name: 'second'}]});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+      const root = f() as FieldNode;
+
+      f().markAsTouched();
+
+      expect(f().touched()).toBeTrue();
+      expect(root.structure._areChildrenMaterialized()).toBeFalse();
+    });
+
+    it('should mark children as touched when they are materialized after their parent was touched', () => {
+      const data = signal({a: {b: 'test'}, items: [{name: 'first'}, {name: 'second'}]});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+
+      f().markAsTouched();
+
+      // Accessing `a` materializes the root's children, but not the children of `a`.
+      expect(f.a().touched()).toBeTrue();
+      expect(f.items().touched()).toBeTrue();
+      expect((f.a() as FieldNode).structure._areChildrenMaterialized()).toBeFalse();
+      expect((f.items() as FieldNode).structure._areChildrenMaterialized()).toBeFalse();
+
+      expect(f.a.b().touched()).toBeTrue();
+      expect(f.items[1].name().touched()).toBeTrue();
+    });
+
+    it('should not mark fields added after materialization as touched', () => {
+      const data = signal({items: [{name: 'first'}]});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+
+      f().markAsTouched();
+      expect(f.items[0]().touched()).toBeTrue();
+
+      data.update((value) => ({items: [...value.items, {name: 'second'}]}));
+
+      expect(f.items[0]().touched()).toBeTrue();
+      expect(f.items[1]().touched()).toBeFalse();
+    });
+
+    it('should not mark lazily materialized children as touched when descendants are skipped', () => {
+      const data = signal({a: {b: 'test'}});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+
+      f().markAsTouched({skipDescendants: true});
+
+      expect(f().touched()).toBeTrue();
+      expect(f.a().touched()).toBeFalse();
+    });
+
+    it('should not mark lazily materialized children as touched after a reset', () => {
+      const data = signal({a: {b: 'test'}});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+
+      f().markAsTouched();
+      f().reset();
+
+      expect(f().touched()).toBeFalse();
+      expect(f.a().touched()).toBeFalse();
+      expect(f.a.b().touched()).toBeFalse();
+    });
+
+    it('should not materialize children when focusing or reloading validation', () => {
+      const data = signal({a: {b: 'test'}});
+      const f = form(data, {injector: TestBed.inject(Injector)});
+      const root = f() as FieldNode;
+
+      f().focusBoundControl();
+      f().reloadValidation();
+
+      expect(root.structure._areChildrenMaterialized()).toBeFalse();
+    });
+
     it('should eagerly materialize children when they have schema logic', async () => {
       const s = schema<{a: {b: string}}>((p) => {
         required(p.a.b, {message: 'required'});

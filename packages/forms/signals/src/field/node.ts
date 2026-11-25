@@ -37,6 +37,7 @@ import type {FormField} from '../directive/form_field';
 import {DYNAMIC} from '../schema/logic';
 import {LogicNode} from '../schema/logic_node';
 import {FieldPathNode} from '../schema/path_node';
+import {isObject} from '../util/type_guards';
 import {FieldNodeContext} from './context';
 import type {FieldAdapter} from './field_adapter';
 import type {FormFieldManager} from './manager';
@@ -129,12 +130,21 @@ export class FieldNode implements FieldState<unknown> {
         undefined,
       );
     if (own) return own;
-    // Fallback to focusing the bound control for one of our children.
+    // Fallback to focusing the bound control for one of our children. A child that hasn't been
+    // materialized can't have a bound control, so there's no need to create it here.
     return this.structure
-      .children()
+      .materializedChildren()
       .map((child) => child.getBindingForFocus())
       .reduce(firstInDom, undefined);
   }
+
+  /**
+   * Whether this field's children should be marked as touched when they are materialized.
+   *
+   * Set when the field is marked as touched (including descendants) before its children exist, so
+   * that touching a field doesn't force the creation of its whole subtree.
+   */
+  private touchChildrenOnMaterialize = false;
 
   /**
    * The `AbortController` for the currently debounced sync, or `undefined` if there is none.
@@ -292,11 +302,29 @@ export class FieldNode implements FieldState<unknown> {
     if (options?.skipDescendants) {
       return;
     }
-    // Inactive subtrees stay lazy: only fields that already exist can have a pending value.
-    const children = skipValidation
-      ? this.structure.materializedChildren()
-      : this.structure.children();
-    for (const child of children) {
+    // Subtrees stay lazy: only fields that already exist can have a pending value. For an active
+    // field whose children haven't been created yet, remember that they need to be marked as
+    // touched once they are (see `onChildrenMaterialized`). Inactive subtrees are not touched.
+    if (!skipValidation && isObject(this.value()) && !this.structure._areChildrenMaterialized()) {
+      this.touchChildrenOnMaterialize = true;
+      return;
+    }
+    for (const child of this.structure.materializedChildren()) {
+      child.markAsTouchedInternal();
+    }
+  }
+
+  /**
+   * Called by the structure after this field's children have been lazily materialized.
+   *
+   * Applies a `markAsTouched` that reached this field before its children existed.
+   */
+  onChildrenMaterialized(): void {
+    if (!this.touchChildrenOnMaterialize) {
+      return;
+    }
+    this.touchChildrenOnMaterialize = false;
+    for (const child of this.structure.materializedChildren()) {
       child.markAsTouchedInternal();
     }
   }
@@ -348,6 +376,7 @@ export class FieldNode implements FieldState<unknown> {
 
     this.nodeState.markAsUntouched();
     this.nodeState.markAsPristine();
+    this.touchChildrenOnMaterialize = false;
 
     for (const binding of this.formFieldBindings()) {
       binding.reset();
@@ -375,7 +404,8 @@ export class FieldNode implements FieldState<unknown> {
       }
     }
 
-    for (const child of this.structure.children()) {
+    // Children that haven't been materialized have no logic, and so no resources to reload.
+    for (const child of this.structure.materializedChildren()) {
       child._reloadValidation();
     }
   }
